@@ -727,13 +727,34 @@ def renderizar_p3():
     # --- 5c. P3 (🗳️ COMO O DEPUTADO VOTOU POR TEMA) ---
     st.header("🗳️ P3 — Como o Deputado Votou por Tema")
 
+# 1. Cria o mapeamento de "Nome" para "Nome (Partido - Estado)" usando os dados já filtrados
+    df_nomes_p3 = df_filtrado[['txNomeParlamentar', 'sgPartido', 'sgUF']].dropna().drop_duplicates(subset=['txNomeParlamentar'], keep='last')
+    
+    mapa_nomes_p3 = {}
+    for _, row in df_nomes_p3.iterrows():
+        nome = row['txNomeParlamentar']
+        partido = row['sgPartido']
+        uf = row['sgUF']
+        mapa_nomes_p3[nome] = f"{nome} ({partido} - {uf})"
+
+    # 2. Gera a lista com os nomes puros ordenados
+    nomes_p3_disp = sorted(df_nomes_p3['txNomeParlamentar'].tolist())
+
+    # 3. Monta as colunas e o selectbox com o format_func
     col_p3a, col_p3b = st.columns(2)
+    
     with col_p3a:
-        dep_p3 = st.selectbox("Selecione o Deputado:", sorted(df_filtrado['txNomeParlamentar'].dropna().unique()), key='dep_p3')
+        dep_p3 = st.selectbox(
+            "Selecione o Deputado:", 
+            options=nomes_p3_disp, 
+            format_func=lambda x: mapa_nomes_p3.get(x, x), # <-- Muda apenas a exibição
+            key='dep_p3'
+        )
+        
     with col_p3b:
         lista_temas = sorted(TEMAS_KEYWORDS.keys()) + ["Todos"]
         tema_p3 = st.selectbox("Selecione o Eixo Temático:", lista_temas, key='tema_p3')
-
+        
     # --- FILTRO DE CATEGORIA ---
     categorias_disp = ["📋 Votação Principal", "📝 Alteração do Texto", "⚙️ Procedimento Legislativo", "🛑 Análise de Veto"]
     st.markdown("Filtrar por Categoria da Votação:")
