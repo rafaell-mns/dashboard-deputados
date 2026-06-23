@@ -475,8 +475,26 @@ with st.spinner('Consultando os dados da 57ª Legislatura...'):
 st.sidebar.header("🔍 Filtros Globais")
 
 # 1. Filtro de Nome
-nomes_disp = ["Todos"] + sorted(df_principal['txNomeParlamentar'].dropna().unique().tolist())
-nome_sel = st.sidebar.selectbox("Buscar por Nome do Deputado", nomes_disp)
+# Pega a última combinação de Nome, Partido e Estado de cada deputado (útil caso alguém tenha mudado de partido)
+df_nomes = df_principal[['txNomeParlamentar', 'sgPartido', 'sgUF']].dropna().drop_duplicates(subset=['txNomeParlamentar'], keep='last')
+
+# Cria um dicionário que mapeia o "Nome" para "Nome (Partido - Estado)"
+mapa_nomes = {"Todos": "Todos"}
+for _, row in df_nomes.iterrows():
+    nome = row['txNomeParlamentar']
+    partido = row['sgPartido']
+    uf = row['sgUF']
+    mapa_nomes[nome] = f"{nome} ({partido} - {uf})"
+
+# Lista de opções contendo apenas os nomes puros (para o filtro continuar funcionando)
+nomes_disp = ["Todos"] + sorted(df_nomes['txNomeParlamentar'].tolist())
+
+# Selectbox usando o format_func para alterar apenas a exibição visual
+nome_sel = st.sidebar.selectbox(
+    "Buscar por Nome do Deputado", 
+    options=nomes_disp,
+    format_func=lambda x: mapa_nomes.get(x, x) # <-- Aqui acontece a mágica
+)
 
 # 2. Lógica para exibir a foto do deputado selecionado
 if nome_sel != "Todos":
@@ -535,14 +553,26 @@ def renderizar_p1():
     with col_slider:
         n_top = st.slider("Mostrar quantos deputados no ranking de gastos?", 5, 50, 15)
 
+    # 1. Agrupa e soma os gastos
     ranking_gastos = df_filtrado.groupby(['txNomeParlamentar', 'sgPartido', 'sgUF'])['vlrLiquido'].sum().sort_values(ascending=False).reset_index()
 
+    # 2. Cria a nova coluna com o formato desejado: Nome (Partido - UF)
+    ranking_gastos['NomeExibicao'] = ranking_gastos['txNomeParlamentar'] + " (" + ranking_gastos['sgPartido'] + " - " + ranking_gastos['sgUF'] + ")"
+
+    # 3. Atualiza o gráfico para usar a nova coluna no eixo Y
     fig_p1 = px.bar(
-        ranking_gastos.head(n_top), x='vlrLiquido', y='txNomeParlamentar',
-        orientation='h', color='vlrLiquido', color_continuous_scale='Reds',
-        labels={'vlrLiquido': 'Total Gasto (R$)', 'txNomeParlamentar': 'Deputado'},
-        template=template_grafico, hover_data=['sgPartido', 'sgUF']
+        ranking_gastos.head(n_top), 
+        x='vlrLiquido', 
+        y='NomeExibicao', # <-- Nova coluna sendo usada aqui
+        orientation='h', 
+        color='vlrLiquido', 
+        color_continuous_scale='Reds',
+        labels={'vlrLiquido': 'Total Gasto (R$)', 'NomeExibicao': 'Deputado'}, # <-- Label atualizado
+        template=template_grafico, 
+        # Mantém os dados originais no hover (balão flutuante) para ficar mais limpo
+        hover_data={'txNomeParlamentar': True, 'sgPartido': True, 'sgUF': True, 'NomeExibicao': False} 
     )
+    
     fig_p1.update_layout(yaxis={'categoryorder':'total ascending'}, height=400 + (n_top * 10))
     st.plotly_chart(fig_p1, width='stretch')
     st.divider()
@@ -945,7 +975,17 @@ def renderizar_p4():
 
     if escolaridades_disponiveis:
         nivel_sel = st.selectbox("Selecione um nível de instrução para listar os parlamentares:", escolaridades_disponiveis)
+        
+        # 1. Filtra, seleciona e ordena
         df_nivel_sel = df_u[df_u['escolaridade'] == nivel_sel][['txNomeParlamentar', 'sgPartido', 'sgUF']].sort_values(by='txNomeParlamentar')
+        
+        # 2. Renomeia as colunas apenas para a exibição
+        df_nivel_sel = df_nivel_sel.rename(columns={
+            'txNomeParlamentar': 'Nome', 
+            'sgPartido': 'Partido', 
+            'sgUF': 'Estado'
+        })
+        
         st.markdown(f"**Parlamentares com '{nivel_sel}' ({len(df_nivel_sel)} encontrados):**")
         st.dataframe(df_nivel_sel, width='stretch', hide_index=True)
     else:
@@ -973,18 +1013,34 @@ def renderizar_p6():
     )
 
     # Ordem pedagógica dos níveis de escolaridade — usada em todos os sub-gráficos
+# Ordem pedagógica dos níveis de escolaridade (baseado no Observatório Político)
     ORDEM_ESC = [
-        'Ensino Fundamental Incompleto', 'Ensino Fundamental',
-        'Ensino Médio Incompleto', 'Ensino Médio',
-        'Superior Incompleto', 'Superior',
-        'Especialização', 'Mestrado', 'Doutorado', 'Não Informado'
+        'Não Informado',
+        'Primário Incompleto',
+        'Ensino Fundamental Incompleto',
+        'Ensino Fundamental',
+        'Secundário Incompleto',
+        'Ensino Médio Incompleto',
+        'Secundário',
+        'Ensino Médio',
+        'Ensino Técnico',
+        'Superior Incompleto',
+        'Superior',
+        'Especialização',
+        'Pós-Graduação',
+        'Mestrado Incompleto',
+        'Mestrado',
+        'Doutorado Incompleto',
+        'Doutorado'
     ]
+    
     niveis_presentes = [n for n in ORDEM_ESC if n in perfil_dep_esc['escolaridade'].unique()]
     niveis_extras = [
         n for n in perfil_dep_esc['escolaridade'].dropna().unique()
         if n not in ORDEM_ESC
     ]
     ordem_final = niveis_presentes + niveis_extras
+    
 
     def aplicar_ordem(df, col='escolaridade'):
         df = df.copy()
@@ -1013,7 +1069,12 @@ def renderizar_p6():
                 labels={'escolaridade': 'Escolaridade', 'media': label_y, 'n': 'Nº Deputados'},
                 template=template_grafico,
             )
-            fig_m.update_layout(xaxis_tickangle=-30, coloraxis_showscale=False)
+            # <-- AQUI: Adicionado categoryorder e categoryarray no xaxis
+            fig_m.update_layout(
+                xaxis_tickangle=-30, 
+                coloraxis_showscale=False,
+                xaxis={'categoryorder': 'array', 'categoryarray': ordem_final}
+            )
             fig_m.update_traces(textposition='outside')
             st.plotly_chart(fig_m, width='stretch')
             st.caption("Passe o mouse sobre as barras para ver o número de deputados em cada nível.")
@@ -1026,7 +1087,12 @@ def renderizar_p6():
                 labels={'escolaridade': 'Escolaridade', col_y: label_y},
                 template=template_grafico,
             )
-            fig_b.update_layout(xaxis_tickangle=-30, showlegend=False)
+            # <-- AQUI: Adicionado categoryorder e categoryarray no xaxis
+            fig_b.update_layout(
+                xaxis_tickangle=-30, 
+                showlegend=False,
+                xaxis={'categoryorder': 'array', 'categoryarray': ordem_final}
+            )
             st.plotly_chart(fig_b, width='stretch')
 
     # ------------------------------------------------------------------
@@ -1224,8 +1290,6 @@ def renderizar_p8():
     )
 
 
-
-
     df_influencia = calcular_influencia_p8()
 
     # Junta com nome/partido/UF/escolaridade do df_principal
@@ -1251,21 +1315,27 @@ def renderizar_p8():
             st.subheader("Deputados com maior taxa de aprovação das proposições assinadas")
             st.caption("Mínimo de 3 proposições assinadas para entrar no ranking (evita distorção com quem só assinou 1).")
 
-            df_p8_taxa = df_inf_filtrado[df_inf_filtrado['total_proposicoes'] >= 3].sort_values('taxa_aprovacao', ascending=False).head(n_p8)
+            # Adicionado .copy() para poder criar a nova coluna com segurança
+            df_p8_taxa = df_inf_filtrado[df_inf_filtrado['total_proposicoes'] >= 3].sort_values('taxa_aprovacao', ascending=False).head(n_p8).copy()
 
             if df_p8_taxa.empty:
                 st.info("Nenhum deputado com 3+ proposições no filtro atual.")
             else:
+                # Criando a coluna formatada
+                df_p8_taxa['NomeExibicao'] = df_p8_taxa['txNomeParlamentar'] + " (" + df_p8_taxa['sgPartido'] + " - " + df_p8_taxa['sgUF'] + ")"
+
                 fig_p8_t = px.bar(
                     df_p8_taxa,
-                    x='taxa_aprovacao', y='txNomeParlamentar',
+                    x='taxa_aprovacao', 
+                    y='NomeExibicao', # <-- Usando a nova coluna
                     orientation='h',
                     color='taxa_aprovacao', color_continuous_scale='Greens',
                     labels={
                         'taxa_aprovacao': 'Taxa de Aprovação (%)',
-                        'txNomeParlamentar': 'Deputado'
+                        'NomeExibicao': 'Deputado' # <-- Label atualizado
                     },
-                    hover_data={'sgPartido': True, 'sgUF': True, 'total_proposicoes': True, 'proposicoes_aprovadas': True},
+                    # Ajustando o hover para esconder o NomeExibicao e mostrar os dados separados
+                    hover_data={'NomeExibicao': False, 'txNomeParlamentar': True, 'sgPartido': True, 'sgUF': True, 'total_proposicoes': True, 'proposicoes_aprovadas': True},
                     template=template_grafico,
                     text_auto='.1f'
                 )
@@ -1279,19 +1349,25 @@ def renderizar_p8():
             st.subheader("Deputados com maior número absoluto de proposições aprovadas")
             st.caption("Deputados que mais contribuíram com o volume total de aprovações no período.")
 
-            df_p8_abs = df_inf_filtrado.sort_values('proposicoes_aprovadas', ascending=False).head(n_p8)
+            # Adicionado .copy()
+            df_p8_abs = df_inf_filtrado.sort_values('proposicoes_aprovadas', ascending=False).head(n_p8).copy()
+            
+            # Criando a coluna formatada
+            df_p8_abs['NomeExibicao'] = df_p8_abs['txNomeParlamentar'] + " (" + df_p8_abs['sgPartido'] + " - " + df_p8_abs['sgUF'] + ")"
 
             fig_p8_a = px.bar(
                 df_p8_abs,
-                x='proposicoes_aprovadas', y='txNomeParlamentar',
+                x='proposicoes_aprovadas', 
+                y='NomeExibicao', # <-- Usando a nova coluna
                 orientation='h',
                 color='perc_do_total_aprov', color_continuous_scale='Teal',
                 labels={
                     'proposicoes_aprovadas': 'Proposições Aprovadas',
-                    'txNomeParlamentar': 'Deputado',
+                    'NomeExibicao': 'Deputado', # <-- Label atualizado
                     'perc_do_total_aprov': '% do Total de Aprovações'
                 },
-                hover_data={'sgPartido': True, 'sgUF': True, 'taxa_aprovacao': True, 'perc_do_total_aprov': True},
+                # Ajustando o hover
+                hover_data={'NomeExibicao': False, 'txNomeParlamentar': True, 'sgPartido': True, 'sgUF': True, 'taxa_aprovacao': True, 'perc_do_total_aprov': True},
                 template=template_grafico,
                 text_auto=True
             )
@@ -1479,17 +1555,41 @@ def renderizar_p11():
 
     with tab_a:
         st.subheader("Média de Sessões Deliberativas Comparecidas por Deputado (por Partido)")
-        fig_a = px.bar(df_partidos_P11.sort_values('perc_frequencia', ascending=False), x='sgPartido', y='perc_frequencia', color='perc_frequencia', color_continuous_scale='Viridis', template=template_grafico, labels={'perc_frequencia': 'Média de Sessões Comparecidas'})
+        fig_a = px.bar(
+            df_partidos_P11.sort_values('perc_frequencia', ascending=False), 
+            x='sgPartido', 
+            y='perc_frequencia', 
+            color='perc_frequencia', 
+            color_continuous_scale='Viridis', 
+            template=template_grafico, 
+            labels={'perc_frequencia': 'Média de Sessões Comparecidas', 'sgPartido': 'Partido'} # <-- Adicionado aqui
+        )
         st.plotly_chart(fig_a, width='stretch')
 
     with tab_b:
         st.subheader("Total de Proposições Legislativas por Partido")
-        fig_b = px.bar(df_partidos_P11.sort_values('qtd_proposicoes', ascending=False), x='sgPartido', y='qtd_proposicoes', color='qtd_proposicoes', color_continuous_scale='Greens', template=template_grafico, labels={'qtd_proposicoes': 'Número de Proposições'})
+        fig_b = px.bar(
+            df_partidos_P11.sort_values('qtd_proposicoes', ascending=False), 
+            x='sgPartido', 
+            y='qtd_proposicoes', 
+            color='qtd_proposicoes', 
+            color_continuous_scale='Greens', 
+            template=template_grafico, 
+            labels={'qtd_proposicoes': 'Número de Proposições', 'sgPartido': 'Partido'} # <-- Adicionado aqui
+        )
         st.plotly_chart(fig_b, width='stretch')
 
     with tab_c:
         st.subheader("Gasto Total Acumulado (Cota Parlamentar) por Partido")
-        fig_c = px.bar(df_partidos_P11.sort_values('vlrLiquido', ascending=False), x='sgPartido', y='vlrLiquido', color='vlrLiquido', color_continuous_scale='Reds', template=template_grafico, labels={'vlrLiquido': 'Total Gasto (R$)'})
+        fig_c = px.bar(
+            df_partidos_P11.sort_values('vlrLiquido', ascending=False), 
+            x='sgPartido', 
+            y='vlrLiquido', 
+            color='vlrLiquido', 
+            color_continuous_scale='Reds', 
+            template=template_grafico, 
+            labels={'vlrLiquido': 'Total Gasto (R$)', 'sgPartido': 'Partido'} # <-- Adicionado aqui
+        )
         st.plotly_chart(fig_c, width='stretch')
 
     with tab_d:
